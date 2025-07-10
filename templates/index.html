@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HematoVision - Blood Cell Classifier</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1><span class="medical-icon">🧬</span>HematoVision</h1>
+            <p class="subtitle">Advanced Blood Cell Classification System</p>
+        </div>
+        <div class="main-content">
+            <div class="upload-section">
+                <form method="POST" action="/" enctype="multipart/form-data" class="upload-form" id="uploadForm">
+                    <label>Upload Blood Smear Image for Analysis</label>
+                    <div class="file-input-wrapper">
+                        <input type="file" name="file" accept="image/*" required id="fileInput">
+                        <div class="file-input-text" id="fileInputDisplay">
+                            <span>📁</span>
+                            <span id="fileName">Choose Image File</span>
+                        </div>
+                    </div>
+                    
+                    <div class="button-group">
+                        <button type="submit" class="upload-btn" id="analyzeBtn">
+                            <span>🔬</span> <span id="analyzeBtnText">Analyze Blood Cells</span>
+                        </button>
+                        <button type="button" class="clear-btn" id="clearBtn">
+                            <span>🗑️</span> Clear Results
+                        </button>
+                    </div>
+                </form>
+                
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p id="loadingText">Processing your image...</p>
+                </div>
+
+                <div class="error-message" id="errorMessage" style="display: none;">
+                    <p id="errorText">Please select a valid image file</p>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="results-section" id="resultsSection">
+                <div class="prediction-card">
+                    <h2>🎯 Diagnosis</h2>
+                    <div class="prediction-result" id="predictionResult">{{ result or 'No analysis yet' }}</div>
+                    <div class="confidence-score" id="confidenceScore">
+                        {% if confidence %}
+                            Confidence: {{ confidence }}%
+                        {% else %}
+                            Confidence: --
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="image-card">
+                    <h2>📸 Analyzed Image</h2>
+                    {% if image_file %}
+                        <img src="{{ url_for('uploaded_file', filename=image_file) }}" alt="Uploaded Blood Smear" class="uploaded-image" id="analyzedImage">
+                    {% else %}
+                        <div class="no-image-placeholder" id="imagePlaceholder">
+                            <span>📸</span>
+                            <p>No image uploaded yet</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Chart Section -->
+            {% if class_probs %}
+            <div class="chart-section" id="chartSection">
+                <h2>📊 Detailed Analysis Results</h2>
+                <canvas id="predictionChart" width="400" height="300"></canvas>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>
+        // DOM Elements
+        const fileInput = document.getElementById('fileInput');
+        const fileName = document.getElementById('fileName');
+        const fileInputDisplay = document.getElementById('fileInputDisplay');
+        const uploadForm = document.getElementById('uploadForm');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const analyzeBtnText = document.getElementById('analyzeBtnText');
+        const clearBtn = document.getElementById('clearBtn');
+        const loading = document.getElementById('loading');
+        const loadingText = document.getElementById('loadingText');
+        const errorMessage = document.getElementById('errorMessage');
+        const errorText = document.getElementById('errorText');
+        const resultsSection = document.getElementById('resultsSection');
+        const predictionResult = document.getElementById('predictionResult');
+        const confidenceScore = document.getElementById('confidenceScore');
+
+        // File input handling
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            
+            if (file) {
+                // Validate file type
+                const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+                
+                if (validTypes.includes(file.type)) {
+                    fileName.textContent = file.name;
+                    fileInputDisplay.classList.add('file-selected');
+                    hideError();
+                    analyzeBtn.disabled = false;
+                } else {
+                    showError('Please select a valid image file (JPG, PNG, GIF, WebP)');
+                    resetFileInput();
+                }
+            } else {
+                resetFileInput();
+            }
+        });
+
+        // Form submission (Analyze Button) - FIXED
+        uploadForm.addEventListener('submit', function(e) {
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                e.preventDefault();
+                showError('Please select an image file first');
+                return;
+            }
+
+            // Show loading state
+            showLoading('Analyzing blood cells...');
+            disableButtons();
+            
+            // Form will submit normally to Flask backend
+        });
+
+        // Clear button functionality
+        clearBtn.addEventListener('click', function() {
+            clearAll();
+        });
+
+        // Helper Functions
+        function showLoading(message = 'Processing...') {
+            loading.style.display = 'block';
+            loadingText.textContent = message;
+            hideError();
+        }
+
+        function hideLoading() {
+            loading.style.display = 'none';
+        }
+
+        function showError(message) {
+            errorText.textContent = message;
+            errorMessage.style.display = 'block';
+        }
+
+        function hideError() {
+            errorMessage.style.display = 'none';
+        }
+
+        function disableButtons() {
+            analyzeBtn.disabled = true;
+            analyzeBtnText.textContent = 'Analyzing...';
+            clearBtn.disabled = true;
+        }
+
+        function enableButtons() {
+            analyzeBtn.disabled = false;
+            analyzeBtnText.textContent = 'Analyze Blood Cells';
+            clearBtn.disabled = false;
+        }
+
+        function resetFileInput() {
+            fileName.textContent = 'Choose Image File';
+            fileInputDisplay.classList.remove('file-selected');
+            fileInput.value = '';
+        }
+
+        function showResults(result, confidence, imageUrl = null) {
+            predictionResult.textContent = result;
+            confidenceScore.textContent = `Confidence: ${confidence}%`;
+            
+            if (imageUrl) {
+                const analyzedImage = document.getElementById('analyzedImage');
+                if (analyzedImage) {
+                    analyzedImage.src = imageUrl;
+                }
+            }
+            
+            resultsSection.style.display = 'grid';
+        }
+
+        // Clear results and redirect to home
+        function clearAll() {
+            window.location.href = '/';
+        }
+
+        // Real chart creation for Flask backend data
+        function createChart(labels, data) {
+            const chartSection = document.getElementById('chartSection');
+            if (chartSection) {
+                chartSection.style.display = 'block';
+            }
+
+            const ctx = document.getElementById('predictionChart');
+            if (!ctx) return;
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Prediction Confidence (%)',
+                        data: data,
+                        backgroundColor: [
+                            'rgba(231, 76, 60, 0.8)',   // EOSINOPHIL - Red
+                            'rgba(52, 152, 219, 0.8)',  // LYMPHOCYTE - Blue  
+                            'rgba(46, 204, 113, 0.8)',  // MONOCYTE - Green
+                            'rgba(241, 196, 15, 0.8)'   // NEUTROPHIL - Yellow
+                        ],
+                        borderColor: [
+                            'rgba(231, 76, 60, 1)',
+                            'rgba(52, 152, 219, 1)', 
+                            'rgba(46, 204, 113, 1)',
+                            'rgba(241, 196, 15, 1)'
+                        ],
+                        borderWidth: 2,
+                        borderRadius: 8,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            labels: {
+                                color: '#2c3e50',
+                                font: { size: 14, weight: 'bold' }
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Blood Cell Classification Results',
+                            color: '#2c3e50',
+                            font: { size: 16, weight: 'bold' }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            grid: { color: 'rgba(0, 0, 0, 0.1)' },
+                            ticks: { 
+                                color: '#2c3e50', 
+                                font: { weight: 'bold' },
+                                callback: function(value) {
+                                    return value + '%';
+                                }
+                            }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { 
+                                color: '#2c3e50', 
+                                font: { weight: 'bold' },
+                                maxRotation: 45
+                            }
+                        }
+                    },
+                    animation: {
+                        duration: 2000,
+                        easing: 'easeInOutQuart'
+                    }
+                }
+            });
+        }
+
+        // Drag and drop functionality
+        const uploadSection = document.querySelector('.upload-section');
+        
+        uploadSection.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            uploadSection.classList.add('drag-over');
+        });
+
+        uploadSection.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            uploadSection.classList.remove('drag-over');
+        });
+
+        uploadSection.addEventListener('drop', function(e) {
+            e.preventDefault();
+            uploadSection.classList.remove('drag-over');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        });
+
+        // Initialize - Show results if they exist from Flask template
+        {% if result %}
+            document.addEventListener('DOMContentLoaded', function() {
+                resultsSection.style.display = 'grid';
+                
+                {% if class_probs %}
+                    const labels = {{ class_names | tojson | safe }};
+                    const data = {{ class_probs | tojson | safe }};
+                    createChart(labels, data);
+                {% endif %}
+            });
+        {% endif %}
+        
+        // Make file input wrapper clickable
+        fileInputDisplay.addEventListener('click', function() {
+            fileInput.click();
+        });
+    </script>
+</body>
+</html>
